@@ -1,3 +1,4 @@
+import math
 import re
 
 
@@ -7,6 +8,12 @@ class Calculator:
         r"|inf|nan|[+\-*/^()_]|\s+",
         re.IGNORECASE,
     )
+
+    def __init__(self):
+        self.previous_result = None
+        self._tokens = iter(())
+        self._current_token = None
+
 
     def check_characters(self, expression: str) -> None:
         """Проверяет, что строка содержит только допустимые числа и обозначения"""
@@ -68,33 +75,139 @@ class Calculator:
         return [part.strip() for part in parts if part.strip()]
 
 
+    def tokenize(self, expression: str) -> list[str]:
+        """Разделяет выражение на токены, обозначая унарный минус как u-"""
+        unary_minuses = set(self.find_unary_minuses(expression))
+        tokens = []
+        for match in self.TOKEN_PATTERN.finditer(expression):
+            token = match.group()
+            if token.isspace():
+                continue
+            if match.start() in unary_minuses:
+                token = "u-"
+            tokens.append(token)
+        return tokens
+
+
+    def _next_token(self) -> None:
+        self._current_token = next(self._tokens, None)
+
+
+    def _parse_expression(self) -> float:
+        """Сложение и вычитание: операции с наименьшим приоритетом"""
+        result = self._parse_term()
+        while self._current_token in ("+", "-"):
+            operator = self._current_token
+            self._next_token()
+            right = self._parse_term()
+            result = result + right if operator == "+" else result - right
+        return result
+
+
+    def _parse_term(self) -> float:
+        """Умножение и деление выполняются слева направо"""
+        result = self._parse_unary()
+        while self._current_token in ("*", "/"):
+            operator = self._current_token
+            self._next_token()
+            right = self._parse_unary()
+            if operator == "*":
+                result *= right
+            else:
+                if right == 0:
+                    raise ZeroDivisionError("Деление на ноль")
+                result /= right
+        return result
+
+
+    def _parse_unary(self) -> float:
+        """Унарный минус применяется после возведения в степень"""
+        if self._current_token == "u-":
+            self._next_token()
+            # здесь рекурсивно вызывается, чтобы обработать несколько унарных минусов подряд
+            return -self._parse_unary()
+        return self._parse_power()
+
+
+    def _parse_power(self) -> float:
+        """Степень разбирается справа налево: 2^3^2 = 2^(3^2)"""
+        base = self._parse_atom()
+        if self._current_token == "^":
+            self._next_token()
+            exponent = self._parse_unary()
+            try:
+                return math.pow(base, exponent)
+            except ValueError as error:
+                raise ValueError("Невозможно вычислить степень в вещественных числах") from error
+        return base
+
+
+    def _parse_atom(self) -> float:
+        """Число, предыдущий результат или выражение в скобках"""
+        token = self._current_token
+        if token is None:
+            raise ValueError("Не хватает операнда")
+
+        if token == "(":
+            self._next_token()
+            result = self._parse_expression()
+            if self._current_token != ")":
+                raise ValueError("Ожидалась закрывающая скобка")
+            self._next_token()
+            return result
+
+        if token == "_":
+            if self.previous_result is None:
+                raise ValueError("Предыдущий результат ещё не определён")
+            self._next_token()
+            return self.previous_result
+
+        number = self.parse_number(token)
+        if number is None:
+            raise ValueError(f"Ожидалось число или '(', получено {token!r}")
+        self._next_token()
+        return number
+
+
+    def calculate(self, expression: str) -> float:
+        """Проверяет выражение, вычисляет его и сохраняет результат"""
+        self.check_characters(expression)
+        self.check_parentheses(expression)
+        if not expression.strip():
+            raise ValueError("пустое выражение")
+
+        # создаем итератор, возвращающий спраршенные части
+        self._tokens = iter(self.tokenize(expression))
+        # после создания итератора получаем перый эл-т
+        self._next_token()
+
+        result = self._parse_expression()
+        # между числами не нашелся оператор
+        if self._current_token is not None:
+            raise ValueError(f"Ожидался оператор перед {self._current_token!r}")
+
+        self.previous_result = result
+        return result
+
+
     def __call__(self) -> None:
-        expression = input("Введите выражение: ").strip()
+        print("Для выхода введите exit или quit. Можно также нажать Ctrl+C или Ctrl+D.")
+        
+        while True:
+            try:
+                expression = input("Введите выражение: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
 
-        try:
-            self.check_characters(expression)
-            self.check_parentheses(expression)
-        except ValueError as error:
-            print(f"Ошибка: {error}")
-            return
+            if expression.lower() in ("exit", "quit"):
+                break
 
-        if not expression:
-            print("Ошибка: пустое выражение")
-            return
-
-        number = self.parse_number(expression)
-        if number is not None:
-            print(number)
-            return
-
-        try:
-            unary_minuses = self.find_unary_minuses(expression)
-        except ValueError as error:
-            print(f"Ошибка: {error}")
-            return
-        parts = self.split_parentheses(expression)
-        print("Позиции унарных минусов (с нуля):", unary_minuses)
-        print("Части выражения:", parts)
+            try:
+                print(self.calculate(expression))
+            except OverflowError:
+                print("Ошибка: переполнение при вычислении")
+            except (ValueError, ZeroDivisionError) as error:
+                print(f"Ошибка: {error}")
 
 
 if __name__ == "__main__":
