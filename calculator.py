@@ -114,10 +114,18 @@ class Calculator:
             if operator == "*":
                 result *= right
             else:
-                if right == 0:
-                    raise ZeroDivisionError("Деление на ноль")
-                result /= right
+                result = self._divide(result, right)
         return result
+
+
+    def _divide(self, left: float, right: float) -> float:
+        """При делении на ноль возвращает nan или бесконечность с нужным знаком"""
+        if right == 0:
+            if left == 0 or math.isnan(left):
+                return math.nan
+            sign = math.copysign(1.0, left) * math.copysign(1.0, right)
+            return math.copysign(math.inf, sign)
+        return left / right
 
 
     def _parse_unary(self) -> float:
@@ -135,11 +143,35 @@ class Calculator:
         if self._current_token == "^":
             self._next_token()
             exponent = self._parse_unary()
-            try:
-                return math.pow(base, exponent)
-            except ValueError as error:
-                raise ValueError("Невозможно вычислить степень в вещественных числах") from error
+            return self._power_with_undefined_cases(base, exponent)
         return base
+
+
+    def _power_with_undefined_cases(self, base: float, exponent: float) -> float:
+        """Обрабатывает переполнение и неопределённые результаты степени"""
+        if math.isnan(base) or math.isnan(exponent):
+            return math.nan
+        if exponent == 0 and (base == 0 or math.isinf(base)):
+            return math.nan
+        if abs(base) == 1 and math.isinf(exponent):
+            return math.nan
+
+        negative_odd_power = (
+            math.copysign(1.0, base) < 0
+            and math.isfinite(exponent)
+            and exponent.is_integer()
+            and exponent % 2 != 0
+        )
+        infinity = -math.inf if negative_odd_power else math.inf
+
+        try:
+            return math.pow(base, exponent)
+        except OverflowError:
+            return infinity
+        except ValueError:
+            if base == 0 and exponent < 0:
+                return infinity
+            return math.nan
 
 
     def _parse_atom(self) -> float:
@@ -161,6 +193,12 @@ class Calculator:
                 raise ValueError("Предыдущий результат ещё не определён")
             self._next_token()
             return self.previous_result
+
+        if token == "+":
+            self._next_token()
+            token = self._current_token
+            if token is None or token.lower() != "inf":
+                raise ValueError("Унарный плюс допустим только перед inf")
 
         number = self.parse_number(token)
         if number is None:
@@ -203,10 +241,9 @@ class Calculator:
                 break
 
             try:
-                print(self.calculate(expression))
-            except OverflowError:
-                print("Ошибка: переполнение при вычислении")
-            except (ValueError, ZeroDivisionError) as error:
+                result = self.calculate(expression)
+                print(0.0 if result == 0 else result)
+            except ValueError as error:
                 print(f"Ошибка: {error}")
 
 
